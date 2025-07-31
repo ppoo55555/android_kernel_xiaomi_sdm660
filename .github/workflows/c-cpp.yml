@@ -31,14 +31,11 @@ jobs:
             bc bison flex libssl-dev libelf-dev
 
       - name: Generate defconfig
-        working-directory: ${{ github.workspace }}
         run: make ${{ env.DEFCONFIG }}
 
-      - name: Enable Netfilter & NAT (and disable vDSO32)
-        working-directory: ${{ github.workspace }}
+      - name: Enable Netfilter & NAT and disable vDSO
         run: |
           chmod +x scripts/config
-          # Netfilter & NAT
           scripts/config --enable CONFIG_NETFILTER
           scripts/config --enable CONFIG_NF_CONNTRACK
           scripts/config --enable CONFIG_NF_CONNTRACK_IPV4
@@ -48,26 +45,21 @@ jobs:
           scripts/config --enable CONFIG_NF_NAT_IPV6
           scripts/config --enable CONFIG_IP_NF_TARGET_REDIRECT
           scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          # 禁用 32 位 vDSO，避免 modules_prepare 重复构建 vDSO32
+          scripts/config --disable CONFIG_VDSO
           scripts/config --disable CONFIG_COMPAT_VDSO
-          scripts/config --disable CONFIG_VDSO32
 
       - name: Refresh config (olddefconfig)
-        working-directory: ${{ github.workspace }}
         run: make olddefconfig
 
       - name: Prepare modules
-        working-directory: ${{ github.workspace }}
         run: make modules_prepare
 
       - name: Build Netfilter modules
-        working-directory: ${{ github.workspace }}
         run: |
           make -j$(nproc) M=net/ipv4/netfilter modules
           make -j$(nproc) M=net/netfilter       modules
 
       - name: Collect built .ko files
-        working-directory: ${{ github.workspace }}
         run: |
           mkdir -p modules
           cp net/ipv4/netfilter/*.ko modules/
