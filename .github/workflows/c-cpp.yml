@@ -10,20 +10,10 @@ on:
 jobs:
   build-nat-modules:
     runs-on: ubuntu-latest
-    env:
-      ARCH: arm64
-      CROSS_COMPILE: aarch64-linux-gnu-
-      DEFCONFIG: clover_defconfig
-      KERNEL_SRC: ${{ github.workspace }}/kernel/android_kernel_xiaomi_sdm660
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
-      - name: Dump repo tree for debugging
-        run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          ls -R $GITHUB_WORKSPACE
 
       - name: Install cross-compile toolchain & dependencies
         run: |
@@ -33,12 +23,11 @@ jobs:
             bc bison flex libssl-dev libelf-dev
 
       - name: Generate defconfig
-        working-directory: ${{ env.KERNEL_SRC }}
-        run: |
-          make ${{ env.DEFCONFIG }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
+        run: make clover_defconfig
 
       - name: Enable Netfilter & NAT in .config
-        working-directory: ${{ env.KERNEL_SRC }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
         run: |
           chmod +x scripts/config
           scripts/config --enable CONFIG_NETFILTER
@@ -52,28 +41,28 @@ jobs:
           scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
 
       - name: Refresh config (olddefconfig)
-        working-directory: ${{ env.KERNEL_SRC }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
         run: make olddefconfig
 
       - name: Prepare for module build
-        working-directory: ${{ env.KERNEL_SRC }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
         run: make modules_prepare
 
       - name: Build Netfilter modules
-        working-directory: ${{ env.KERNEL_SRC }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
         run: |
           make -j$(nproc) M=net/ipv4/netfilter modules
           make -j$(nproc) M=net/netfilter modules
 
       - name: Collect built .ko files
-        working-directory: ${{ env.KERNEL_SRC }}
+        working-directory: kernel/android_kernel_xiaomi_sdm660
         run: |
-          mkdir -p ${{ github.workspace }}/modules
-          cp net/ipv4/netfilter/*.ko ${{ github.workspace }}/modules/
-          cp net/netfilter/*.ko       ${{ github.workspace }}/modules/
+          mkdir -p modules
+          cp net/ipv4/netfilter/*.ko modules/
+          cp net/netfilter/*.ko       modules/
 
       - name: Upload NAT modules artifact
         uses: actions/upload-artifact@v4
         with:
           name: ua_nat_modules
-          path: modules
+          path: kernel/android_kernel_xiaomi_sdm660/modules
