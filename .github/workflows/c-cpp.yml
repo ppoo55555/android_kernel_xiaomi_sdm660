@@ -14,9 +14,13 @@ jobs:
       run:
         shell: bash -l {0}
     env:
-      # 交叉编译配置
-      ARCH: arm64
+      # 64 位交叉编译前缀
       CROSS_COMPILE: aarch64-linux-gnu-
+      # 32 位 vDSO 兼容所需前缀
+      CROSS_COMPILE_ARM32: arm-linux-gnueabi-
+      # 架构
+      ARCH: arm64
+      # defconfig 名称
       DEFCONFIG: clover_defconfig
 
     steps:
@@ -28,6 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             bc bison flex libssl-dev libelf-dev
 
       - name: Generate defconfig
@@ -67,7 +72,7 @@ jobs:
         run: |
           mkdir -p modules
           cp net/ipv4/netfilter/*.ko modules/
-          cp net/netfilter/*.ko modules/
+          cp net/netfilter/*.ko       modules/
 
       - name: Upload NAT modules artifact
         uses: actions/upload-artifact@v4
