@@ -11,17 +11,19 @@ jobs:
   build-nat-modules:
     runs-on: ubuntu-latest
     env:
-      # 交叉编译配置
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
-      # defconfig 名称
       DEFCONFIG: clover_defconfig
-      # 内核源码相对路径（工作区根目录下）
       KERNEL_SRC: ${{ github.workspace }}/kernel/android_kernel_xiaomi_sdm660
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Dump repo tree for debugging
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -R $GITHUB_WORKSPACE
 
       - name: Install cross-compile toolchain & dependencies
         run: |
@@ -33,7 +35,6 @@ jobs:
       - name: Generate defconfig
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          # 复制 arch/arm64/configs/clover_defconfig 到 .config
           make ${{ env.DEFCONFIG }}
 
       - name: Enable Netfilter & NAT in .config
@@ -52,13 +53,11 @@ jobs:
 
       - name: Refresh config (olddefconfig)
         working-directory: ${{ env.KERNEL_SRC }}
-        run: |
-          make olddefconfig
+        run: make olddefconfig
 
       - name: Prepare for module build
         working-directory: ${{ env.KERNEL_SRC }}
-        run: |
-          make modules_prepare
+        run: make modules_prepare
 
       - name: Build Netfilter modules
         working-directory: ${{ env.KERNEL_SRC }}
