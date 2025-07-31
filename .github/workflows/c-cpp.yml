@@ -22,33 +22,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install cross-compile toolchain & dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-arm-linux-gnuname: Build NAT Modules
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build-nat-modules:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -l {0}
-    env:
-      ARCH: arm64
-      CROSS_COMPILE: aarch64-linux-gnu-
-      CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      DEFCONFIG: clover_defconfig
-
-    steps:
-      - uses: actions/checkout@v3
-
       - name: Install cross-compile toolchains
         run: |
           sudo apt-get update
@@ -60,10 +33,9 @@ jobs:
       - name: Generate defconfig
         run: make ${{ env.DEFCONFIG }}
 
-      - name: Enable Netfilter/NAT & disable all vDSO
+      - name: Enable Netfilter / NAT and disable all vDSO
         run: |
           chmod +x scripts/config
-          # Netfilter / NAT
           scripts/config --enable CONFIG_NETFILTER
           scripts/config --enable CONFIG_NF_CONNTRACK
           scripts/config --enable CONFIG_NF_CONNTRACK_IPV4
@@ -73,7 +45,6 @@ jobs:
           scripts/config --enable CONFIG_NF_NAT_IPV6
           scripts/config --enable CONFIG_IP_NF_TARGET_REDIRECT
           scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          # 彻底禁用 vDSO（避免 prepare0/​vdso_prepare 依赖）
           scripts/config --disable CONFIG_VDSO
           scripts/config --disable CONFIG_COMPAT_VDSO
 
@@ -83,14 +54,14 @@ jobs:
       - name: Prepare kernel headers
         run: make modules_prepare
 
-      - name: Build ALL modules (includes netfilter)
+      - name: Build all modules (includes Netfilter)
         run: make -j$(nproc) modules
 
       - name: Collect Netfilter .ko files
         run: |
           mkdir -p modules
-          cp net/ipv4/netfilter/*.ko modules/  || true
-          cp net/netfilter/*.ko       modules/  || true
+          cp net/ipv4/netfilter/*.ko modules/ || true
+          cp net/netfilter/*.ko       modules/ || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
