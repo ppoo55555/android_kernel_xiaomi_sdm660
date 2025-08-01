@@ -2,7 +2,7 @@ name: Build full kernel with NAT
 
 on:
   push:
-    branches: [ main ]        # 如有其他分支需求，自行添加
+    branches: [ main ]           # 如需其他分支，自行添加
   workflow_dispatch:
 
 jobs:
@@ -12,16 +12,16 @@ jobs:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
       CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      DEFCONFIG: clover_defconfig        # 设备 defconfig
+      DEFCONFIG: clover_defconfig          # 设备 defconfig
 
     steps:
     ####################################################################
-    # 1. 取源码
+    # 1. 拉取源码
     ####################################################################
     - uses: actions/checkout@v3
 
     ####################################################################
-    # 2. 安装交叉工具链 + 打包工具
+    # 2. 安装交叉工具链与必需工具
     ####################################################################
     - name: Install toolchains & deps
       run: |
@@ -33,13 +33,13 @@ jobs:
           abootimg zstd
 
     ####################################################################
-    # 3. 生成基础 .config
+    # 3. 生成基础 defconfig
     ####################################################################
     - name: defconfig
       run: make ${{ env.DEFCONFIG }}
 
     ####################################################################
-    # 4. 打开 NAT / conntrack，顺便关掉缺头文件的 BTFM_SLIM
+    # 4. 打开 NAT / conntrack，关闭缺头文件的 BTFM_SLIM
     ####################################################################
     - name: Enable NAT configs & disable vendor BT driver
       run: |
@@ -50,14 +50,19 @@ jobs:
                    CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
           scripts/config --enable "$opt"
         done
-        # 高通私有蓝牙驱动缺头文件，直接关掉
-        scripts/config --disable CONFIG_BTFM_SLIM
+        scripts/config --disable CONFIG_BTFM_SLIM   # 缺私有头文件
 
     - name: olddefconfig
       run: make olddefconfig
 
     ####################################################################
-    # 5. 编译内核（全局 -Wno-error）
+    # 5-a. 预先生成全部 *_trace.h（避免并行竞态）
+    ####################################################################
+    - name: Generate trace headers
+      run: make kernel/trace
+
+    ####################################################################
+    # 5-b. 并行编译内核（全局关闭 -Werror）
     ####################################################################
     - name: Build kernel & modules
       run: |
@@ -74,13 +79,13 @@ jobs:
         tar -I zstd --owner=0 --group=0 -cf ../modules.tar.zst .
 
     ####################################################################
-    # 7. 以 stock-boot.img 为模板，重打包新内核
-    #    请确保仓库根已有  stock-boot.img
+    # 7. 用 stock-boot.img 重新打包新内核
+    #    请确保仓库根已有 stock-boot.img
     ####################################################################
     - name: Repack boot.img
       run: |
         mkdir stock && cd stock
-        abootimg -x ../stock-boot.img          # 拆包
+        abootimg -x ../stock-boot.img
         cd ..
         cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/*.dtb > new-zImage
         abootimg --create new-boot.img -f stock/bootimg.cfg \
