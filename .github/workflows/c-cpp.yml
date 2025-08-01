@@ -1,74 +1,37 @@
-name: Build NAT Modules
+name: Makefile CI
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
+
 jobs:
-  build-nat-modules:
+  build:
+
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -l {0}
-    env:
-      ARCH: arm64
-      CROSS_COMPILE: aarch64-linux-gnu-
-      CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      DEFCONFIG: clover_defconfig
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-      - name: Install cross-compiler toolchains
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-            bc bison flex libssl-dev libelf-dev
+    - name: configure
+      run: sudo apt update
+           sudo apt install git build-essential flex bison libssl-dev libncurses-dev bc python3 -y
 
-      - name: Generate defconfig
-        run: make ${{ env.DEFCONFIG }}
+    - name: Install dependencies
+      run: git clone https://github.com/kyasu/android_kernel_xiaomi_sdm660.git
+           cd android_kernel_xiaomi_sdm660
+           git checkout lineage-22.1
+           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang
+           make ARCH=arm64 O=out sdm660_defconfig
+           export PATH=$(pwd)/clang/bin:$PATH
+           export PATH=$(pwd)/aarch64-gcc/bin:$PATH
+           make -j$(nproc --all) ARCH=arm64 O=out \
+              LLVM=1 \
+              LLVM_IAS=1 \
+              CROSS_COMPILE=aarch64-linux-android- \
+              CROSS_COMPILE_COMPAT=arm-linux-androideabi-
 
-      - name: Enable Netfilter / NAT, disable vDSO & WERROR
-        run: |
-          chmod +x scripts/config
-          # --- 打开 Netfilter / NAT ---
-          scripts/config --enable CONFIG_NETFILTER
-          scripts/config --enable CONFIG_NF_CONNTRACK
-          scripts/config --enable CONFIG_NF_CONNTRACK_IPV4
-          scripts/config --enable CONFIG_NF_CONNTRACK_IPV6
-          scripts/config --enable CONFIG_NF_NAT
-          scripts/config --enable CONFIG_NF_NAT_IPV4
-          scripts/config --enable CONFIG_NF_NAT_IPV6
-          scripts/config --enable CONFIG_IP_NF_TARGET_REDIRECT
-          scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          # --- 关闭 vDSO ---
-          scripts/config --disable CONFIG_VDSO
-          scripts.config --disable CONFIG_COMPAT_VDSO
-          # --- 关闭 Kconfig 层面的 WERROR ---
-          scripts/config --disable CONFIG_WERROR
+    - name: Run check
+      run: make check
 
-      - name: Refresh .config
-        run: make olddefconfig
-
-      - name: Prepare headers
-        run: make modules_prepare
-
-      - name: Build modules (suppress array-compare → error)
-        run: |
-          make -j$(nproc) KCFLAGS="-Wno-error=array-compare" modules
-
-      - name: Collect Netfilter .ko files
-        run: |
-          mkdir -p modules
-          cp -a net/ipv4/netfilter/*.ko modules/ || true
-          cp -a net/netfilter/*.ko       modules/ || true
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ua_nat_modules
-          path: modules
+    - name: Run distcheck
+      run: make distcheck
