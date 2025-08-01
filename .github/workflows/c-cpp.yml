@@ -5,6 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -29,9 +30,10 @@ jobs:
         export CROSS_COMPILE=$PWD/toolchain/bin/aarch64-linux-android-
         make O=out defconfig
         make -j$(nproc) O=out
+        ls -lh out/arch/arm64/boot/
 
     - name: Upload kernel image
       uses: actions/upload-artifact@v4
       with:
         name: kernel
-        path: out/arch/arm64/boot/Image.gz
+        path: out/arch/arm64/boot/Image*
