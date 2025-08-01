@@ -28,7 +28,7 @@ jobs:
     - name: defconfig
       run: make ${{ env.DEFCONFIG }}
 
-    - name: Enable NAT configs
+    - name: Enable NAT configs & disable vendor BT driver
       run: |
         chmod +x scripts/config
         for opt in CONFIG_NETFILTER CONFIG_NF_CONNTRACK CONFIG_NF_CONNTRACK_IPV4 \
@@ -37,17 +37,14 @@ jobs:
                    CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
           scripts/config --enable $opt
         done
+        scripts/config --disable CONFIG_BTFM_SLIM   # 缺私有头
 
-    - run: make olddefconfig
-      name: olddefconfig
+    - name: olddefconfig
+      run: make olddefconfig
 
-    - name: Build kernel & modules
+    - name: Build kernel & modules  # 彻底关闭 Werror
       run: |
-        make -j$(nproc) KCFLAGS="\
-          -Wno-error=array-compare \
-          -Wno-error=address \
-          -Wno-error=dangling-pointer" \
-          Image.gz dtbs modules
+        make -j$(nproc) KCFLAGS="-Wno-error" Image.gz dtbs modules
 
     - name: Install modules
       run: |
