@@ -1,4 +1,4 @@
-name: Build NAT Modules
+name: Build full kernel with NAT
 
 on:
   push:
@@ -6,11 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-nat-modules:
+  build-kernel:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -l {0}
     env:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
@@ -18,57 +15,66 @@ jobs:
       DEFCONFIG: clover_defconfig
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    # 1. 源码
+    - uses: actions/checkout@v3
 
-      - name: Install cross-compiler toolchains
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-            bc bison flex libssl-dev libelf-dev
+    # 2. 工具链
+    - name: Install toolchains & deps
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+          bc bison flex libssl-dev libelf-dev python3-distutils \
+          abootimg zstd
 
-      - name: Generate defconfig
-        run: make ${{ env.DEFCONFIG }}
+    # 3. defconfig
+    - name: defconfig
+      run: make ${{ env.DEFCONFIG }}
 
-      - name: Enable Netfilter / NAT, disable vDSO & WERROR
-        run: |
-          chmod +x scripts/config
-          # --- 打开 Netfilter / NAT ---
-          scripts/config --enable CONFIG_NETFILTER
-          scripts/config --enable CONFIG_NF_CONNTRACK
-          scripts/config --enable CONFIG_NF_CONNTRACK_IPV4
-          scripts/config --enable CONFIG_NF_CONNTRACK_IPV6
-          scripts/config --enable CONFIG_NF_NAT
-          scripts/config --enable CONFIG_NF_NAT_IPV4
-          scripts/config --enable CONFIG_NF_NAT_IPV6
-          scripts/config --enable CONFIG_IP_NF_TARGET_REDIRECT
-          scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          # --- 关闭 vDSO ---
-          scripts/config --disable CONFIG_VDSO
-          scripts.config --disable CONFIG_COMPAT_VDSO
-          # --- 关闭 Kconfig 层面的 WERROR ---
-          scripts/config --disable CONFIG_WERROR
+    - name: Enable NAT configs
+      run: |
+        chmod +x scripts/config
+        for opt in CONFIG_NETFILTER CONFIG_NF_CONNTRACK CONFIG_NF_CONNTRACK_IPV4 \
+                   CONFIG_NF_CONNTRACK_IPV6 CONFIG_NF_NAT CONFIG_NF_NAT_IPV4 \
+                   CONFIG_NF_NAT_IPV6 CONFIG_IP_NF_FILTER CONFIG_IP_NF_TARGET_REDIRECT \
+                   CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
+          scripts/config --enable $opt
+        done
 
-      - name: Refresh .config
-        run: make olddefconfig
+    - name: olddefconfig
+      run: make olddefconfig
 
-      - name: Prepare headers
-        run: make modules_prepare
+    # 5. 编译
+    - name: Build kernel & modules
+      run: |
+        make -j$(nproc) KCFLAGS="\
+          -Wno-error=array-compare \
+          -Wno-error=address" \
+          Image.gz dtbs modules
 
-      - name: Build modules (suppress array-compare → error)
-        run: |
-          make -j$(nproc) KCFLAGS="-Wno-error=array-compare" modules
+    # 6. 安装模块（可选）
+    - name: Install modules
+      run: |
+        INSTALL_MOD_PATH=$PWD/_install
+        make modules_install INSTALL_MOD_PATH=$INSTALL_MOD_PATH
+        cd _install
+        tar -I zstd -cf ../modules.tar.zst .
 
-      - name: Collect Netfilter .ko files
-        run: |
-          mkdir -p modules
-          cp -a net/ipv4/netfilter/*.ko modules/ || true
-          cp -a net/netfilter/*.ko       modules/ || true
+    # 7. 重新打包 boot.img（需仓库根已有 stock-boot.img）
+    - name: Repack boot.img
+      run: |
+        mkdir stock && cd stock
+        abootimg -x ../stock-boot.img    # 拆分
+        cd ..
+        cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/*.dtb > new-zImage
+        abootimg --create new-boot.img -f stock/bootimg.cfg \
+                 -k new-zImage -r stock/initrd.img
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ua_nat_modules
-          path: modules
+    # 8. 上传产物
+    - uses: actions/upload-artifact@v4
+      with:
+        name: full_kernel_nat
+        path: |
+          new-boot.img
+          modules.tar.zst
