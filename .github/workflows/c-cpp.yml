@@ -12,26 +12,27 @@ jobs:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
       CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      DEFCONFIG: clover_defconfig
+      DEFCONFIG: clover_defconfig          # 你的设备 defconfig
 
     steps:
-    # 1. 源码
+    # 1. 拉取源码
     - uses: actions/checkout@v3
 
-    # 2. 工具链
+    # 2. 安装交叉工具链与必需工具
     - name: Install toolchains & deps
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
           gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-          bc bison flex libssl-dev libelf-dev python3-distutils \
-          abootimg zstd
+          bc bison flex libssl-dev libelf-dev \
+          abootimg zstd                # abootimg 用于拆/装 boot.img
 
-    # 3. defconfig
+    # 3. 生成基础 defconfig
     - name: defconfig
       run: make ${{ env.DEFCONFIG }}
 
+    # 4. 打开 Netfilter / NAT（不关闭 vDSO / WERROR）
     - name: Enable NAT configs
       run: |
         chmod +x scripts/config
@@ -41,11 +42,12 @@ jobs:
                    CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
           scripts/config --enable $opt
         done
+        # 其余功能保持默认开启（含 vDSO & WERROR）
 
     - name: olddefconfig
       run: make olddefconfig
 
-    # 5. 编译
+    # 5. 编译内核 + DTB + 全部模块
     - name: Build kernel & modules
       run: |
         make -j$(nproc) KCFLAGS="\
@@ -53,25 +55,28 @@ jobs:
           -Wno-error=address" \
           Image.gz dtbs modules
 
-    # 6. 安装模块（可选）
+    # 6. 安装模块（可选，打成 tar.zst 供刷入）
     - name: Install modules
       run: |
         INSTALL_MOD_PATH=$PWD/_install
         make modules_install INSTALL_MOD_PATH=$INSTALL_MOD_PATH
         cd _install
-        tar -I zstd -cf ../modules.tar.zst .
+        tar -I zstd --owner=0 --group=0 -cf ../modules.tar.zst .
 
-    # 7. 重新打包 boot.img（需仓库根已有 stock-boot.img）
+    # 7. 用 stock-boot.img 重新打包新内核
     - name: Repack boot.img
       run: |
+        # 解包旧 boot
         mkdir stock && cd stock
-        abootimg -x ../stock-boot.img    # 拆分
+        abootimg -x ../stock-boot.img   # 产生 bootimg.cfg / initrd.img / zImage
         cd ..
+        # 合并新 Image.gz + 所有 dtb
         cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/*.dtb > new-zImage
+        # 重打包
         abootimg --create new-boot.img -f stock/bootimg.cfg \
                  -k new-zImage -r stock/initrd.img
 
-    # 8. 上传产物
+    # 8. 上传可刷 boot.img + modules
     - uses: actions/upload-artifact@v4
       with:
         name: full_kernel_nat
