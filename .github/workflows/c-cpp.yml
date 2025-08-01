@@ -12,19 +12,15 @@ jobs:
       run:
         shell: bash -l {0}
     env:
-      # 交叉编译环境
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
       CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      # 设备 defconfig
       DEFCONFIG: clover_defconfig
 
     steps:
-      # 1. 拉取源码
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. 安装 64-bit / 32-bit 工具链 & 依赖
       - name: Install cross-compiler toolchains
         run: |
           sudo apt-get update
@@ -33,15 +29,13 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             bc bison flex libssl-dev libelf-dev
 
-      # 3. 生成基础 defconfig
       - name: Generate defconfig
         run: make ${{ env.DEFCONFIG }}
 
-      # 4. 打开 Netfilter / NAT，关闭 vDSO & WERROR
-      - name: Enable Netfilter & NAT, disable vDSO & WERROR
+      - name: Enable Netfilter / NAT, disable vDSO & WERROR
         run: |
           chmod +x scripts/config
-          # --- 打开需要的模块 ---
+          # --- 打开 Netfilter / NAT ---
           scripts/config --enable CONFIG_NETFILTER
           scripts/config --enable CONFIG_NF_CONNTRACK
           scripts/config --enable CONFIG_NF_CONNTRACK_IPV4
@@ -51,32 +45,28 @@ jobs:
           scripts/config --enable CONFIG_NF_NAT_IPV6
           scripts/config --enable CONFIG_IP_NF_TARGET_REDIRECT
           scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          # --- 关闭 vDSO（64/32）---
+          # --- 关闭 vDSO ---
           scripts/config --disable CONFIG_VDSO
-          scripts/config --disable CONFIG_COMPAT_VDSO
-          # --- 关闭告警即错误 ---
+          scripts.config --disable CONFIG_COMPAT_VDSO
+          # --- 关闭 Kconfig 层面的 WERROR ---
           scripts/config --disable CONFIG_WERROR
 
-      # 5. 让 .config 生效
       - name: Refresh .config
         run: make olddefconfig
 
-      # 6. 准备内核头文件 / 依赖
-      - name: Prepare kernel headers
+      - name: Prepare headers
         run: make modules_prepare
 
-      # 7. 编译所有模块（包含 Netfilter）
-      - name: Build modules
-        run: make -j$(nproc) modules
+      - name: Build modules (suppress array-compare → error)
+        run: |
+          make -j$(nproc) KCFLAGS="-Wno-error=array-compare" modules
 
-      # 8. 收集 Netfilter 相关 .ko
-      - name: Collect Netfilter modules
+      - name: Collect Netfilter .ko files
         run: |
           mkdir -p modules
           cp -a net/ipv4/netfilter/*.ko modules/ || true
           cp -a net/netfilter/*.ko       modules/ || true
 
-      # 9. 上传 artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
