@@ -2,7 +2,7 @@ name: Build full kernel with NAT
 
 on:
   push:
-    branches: [ main ]           # 如需其他分支，自行添加
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -12,91 +12,93 @@ jobs:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
       CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-      DEFCONFIG: clover_defconfig          # 设备 defconfig
+      DEFCONFIG: clover_defconfig
 
     steps:
-    ####################################################################
-    # 1. 拉取源码
-    ####################################################################
-    - uses: actions/checkout@v3
+      ##################################################################
+      # 1. 取源码
+      ##################################################################
+      - uses: actions/checkout@v3
 
-    ####################################################################
-    # 2. 安装交叉工具链与必需工具
-    ####################################################################
-    - name: Install toolchains & deps
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y \
-          gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-          bc bison flex libssl-dev libelf-dev \
-          abootimg zstd
+      ##################################################################
+      # 2. 安装交叉工具链
+      ##################################################################
+      - name: Install toolchains & deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            bc bison flex libssl-dev libelf-dev \
+            abootimg zstd
 
-    ####################################################################
-    # 3. 生成基础 defconfig
-    ####################################################################
-    - name: defconfig
-      run: make ${{ env.DEFCONFIG }}
+      ##################################################################
+      # 3. 生成 defconfig
+      ##################################################################
+      - name: defconfig
+        run: make ${{ env.DEFCONFIG }}
 
-    ####################################################################
-    # 4. 打开 NAT / conntrack，关闭缺头文件的 BTFM_SLIM
-    ####################################################################
-    - name: Enable NAT configs & disable vendor BT driver
-      run: |
-        chmod +x scripts/config
-        for opt in CONFIG_NETFILTER CONFIG_NF_CONNTRACK CONFIG_NF_CONNTRACK_IPV4 \
-                   CONFIG_NF_CONNTRACK_IPV6 CONFIG_NF_NAT CONFIG_NF_NAT_IPV4 \
-                   CONFIG_NF_NAT_IPV6 CONFIG_IP_NF_FILTER CONFIG_IP_NF_TARGET_REDIRECT \
-                   CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
-          scripts/config --enable "$opt"
-        done
-        scripts/config --disable CONFIG_BTFM_SLIM   # 缺私有头文件
+      ##################################################################
+      # 4. 打开 NAT，禁用缺头文件的 BTFM_SLIM
+      ##################################################################
+      - name: Enable NAT configs & disable vendor BT driver
+        run: |
+          chmod +x scripts/config
+          for opt in CONFIG_NETFILTER CONFIG_NF_CONNTRACK CONFIG_NF_CONNTRACK_IPV4 \
+                     CONFIG_NF_CONNTRACK_IPV6 CONFIG_NF_NAT CONFIG_NF_NAT_IPV4 \
+                     CONFIG_NF_NAT_IPV6 CONFIG_IP_NF_FILTER CONFIG_IP_NF_TARGET_REDIRECT \
+                     CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_NF_LOG_IPV4; do
+            scripts/config --enable "$opt"
+          done
+          scripts/config --disable CONFIG_BTFM_SLIM     # 缺私有头文件
 
-    - name: olddefconfig
-      run: make olddefconfig
+      - name: olddefconfig
+        run: make olddefconfig
 
-    ####################################################################
-    # 5-a. 预先生成全部 *_trace.h（避免并行竞态）
-    ####################################################################
-    - name: Generate trace headers
-      run: make kernel/trace
+      ##################################################################
+      # 5-a. 生成核心 + KGSL 的 trace 头文件
+      ##################################################################
+      - name: Generate trace headers
+        run: |
+          make kernel/trace
+          make drivers/gpu/msm/trace
 
-    ####################################################################
-    # 5-b. 并行编译内核（全局关闭 -Werror）
-    ####################################################################
-    - name: Build kernel & modules
-      run: |
-        make -j$(nproc) KCFLAGS="-Wno-error" Image.gz dtbs modules
+      ##################################################################
+      # 5-b. 并行编译（全局关闭 Werror）
+      ##################################################################
+      - name: Build kernel & modules
+        run: |
+          make -j$(nproc) KCFLAGS="-Wno-error" Image.gz dtbs modules
 
-    ####################################################################
-    # 6. 安装模块并打包
-    ####################################################################
-    - name: Install modules
-      run: |
-        INSTALL_MOD_PATH=$PWD/_install
-        make modules_install INSTALL_MOD_PATH=$INSTALL_MOD_PATH
-        cd _install
-        tar -I zstd --owner=0 --group=0 -cf ../modules.tar.zst .
+      ##################################################################
+      # 6. 安装模块并打包
+      ##################################################################
+      - name: Install modules
+        run: |
+          INSTALL_MOD_PATH=$PWD/_install
+          make modules_install INSTALL_MOD_PATH=$INSTALL_MOD_PATH
+          cd _install
+          tar -I zstd --owner=0 --group=0 -cf ../modules.tar.zst .
 
-    ####################################################################
-    # 7. 用 stock-boot.img 重新打包新内核
-    #    请确保仓库根已有 stock-boot.img
-    ####################################################################
-    - name: Repack boot.img
-      run: |
-        mkdir stock && cd stock
-        abootimg -x ../stock-boot.img
-        cd ..
-        cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/*.dtb > new-zImage
-        abootimg --create new-boot.img -f stock/bootimg.cfg \
-                 -k new-zImage -r stock/initrd.img
+      ##################################################################
+      # 7. 用 stock-boot.img 重打包新内核
+      #    仓库根需放置 stock-boot.img
+      ##################################################################
+      - name: Repack boot.img
+        run: |
+          mkdir stock && cd stock
+          abootimg -x ../stock-boot.img
+          cd ..
+          cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/*.dtb > new-zImage
+          abootimg --create new-boot.img -f stock/bootimg.cfg \
+                   -k new-zImage -r stock/initrd.img
 
-    ####################################################################
-    # 8. 上传产物
-    ####################################################################
-    - uses: actions/upload-artifact@v4
-      with:
-        name: full_kernel_nat
-        path: |
-          new-boot.img
-          modules.tar.zst
+      ##################################################################
+      # 8. 上传产物
+      ##################################################################
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full_kernel_nat
+          path: |
+            new-boot.img
+            modules.tar.zst
